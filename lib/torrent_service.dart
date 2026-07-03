@@ -145,6 +145,24 @@ abstract class TorrentManager extends ChangeNotifier {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Custom Announce Options Provider to delegate and override port
+// ─────────────────────────────────────────────────────────────────────────────
+
+class CustomAnnounceOptionsProvider implements AnnounceOptionsProvider {
+  final AnnounceOptionsProvider delegate;
+  final int port;
+
+  CustomAnnounceOptionsProvider(this.delegate, {this.port = 6881});
+
+  @override
+  Future<Map<String, dynamic>> getOptions(Uri uri, String infoHash) async {
+    final options = await delegate.getOptions(uri, infoHash);
+    options['port'] = port; // Override port 0 with valid default TCP port
+    return options;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Internal handle for a live TorrentTask
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -420,13 +438,15 @@ class RealTorrentManager extends TorrentManager {
 
       // ── Step 2: Use trackers to speed up peer discovery ───────────────────
       final infoHashBuffer = Uint8List.fromList(_hexToBytes(infoHash));
-      final tracker = TorrentAnnounceTracker(metaDl);
+      final provider = CustomAnnounceOptionsProvider(metaDl, port: 6881);
+      final tracker = TorrentAnnounceTracker(provider);
       final trackerListener = tracker.createListener();
 
       _activeMetadataTrackers[id] = tracker;
 
       trackerListener.on<AnnouncePeerEventEvent>((event) {
         if (event.event == null) return;
+        debugPrint('[TorrentManager] Tracker returned ${event.event!.peers.length} peers');
         for (final peer in event.event!.peers) {
           metaDl.addNewPeerAddress(peer, PeerSource.tracker);
         }
@@ -458,6 +478,9 @@ class RealTorrentManager extends TorrentManager {
         'http://share.camoe.cn:8080/announce',
         'https://tracker.lilith.raws.dev:443/announce',
         'https://tr.ready.net:443/announce',
+        'http://tracker.files.fm:6969/announce',
+        'http://open.acgtracker.com:1096/announce',
+        'https://tracker.nanoha.org:443/announce',
       ];
       for (final tr in defaultTrackers) {
         final tUri = Uri.tryParse(tr);
@@ -477,11 +500,11 @@ class RealTorrentManager extends TorrentManager {
       });
       _activeMetadataSubscriptions[id] = trackersSubscription;
 
-      // ── Step 3: Await metadata (90 s timeout) ─────────────────────────────
+      // ── Step 3: Await metadata (180 s timeout for slow networks) ──────────
       Torrent torrentModel;
       try {
         torrentModel =
-            await metaCompleter.future.timeout(const Duration(seconds: 90));
+            await metaCompleter.future.timeout(const Duration(seconds: 180));
       } catch (e) {
         debugPrint('[TorrentManager] Metadata failed: $e');
         trackersSubscription.cancel();
