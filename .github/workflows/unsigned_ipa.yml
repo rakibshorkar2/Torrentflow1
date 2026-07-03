@@ -17,7 +17,7 @@ jobs:
     runs-on: macos-latest
 
     env:
-      FLUTTER_VERSION: "3.32.0"
+      FLUTTER_VERSION: "3.44.4"
       IPA_NAME: "TorrentFlow-unsigned.ipa"
 
     steps:
