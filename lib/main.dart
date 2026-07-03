@@ -1019,6 +1019,22 @@ class _TorrentCard extends StatelessWidget {
                   color: TFColors.accentAmber,
                   isDark: isDark,
                 ),
+              if (torrent.status == TorrentStatus.queued)
+                SpeedChip(
+                  label: torrent.name.startsWith('Metadata') || torrent.totalSize == 0
+                      ? 'Resolving Metadata...'
+                      : 'Queued',
+                  icon: CupertinoIcons.arrow_2_circlepath,
+                  color: TFColors.textTertiary,
+                  isDark: isDark,
+                ),
+              if (torrent.status == TorrentStatus.error)
+                SpeedChip(
+                  label: torrent.error ?? 'Connection Error',
+                  icon: CupertinoIcons.exclamationmark_triangle,
+                  color: TFColors.accentRed,
+                  isDark: isDark,
+                ),
             ],
           ),
 

@@ -366,7 +366,25 @@ class RealTorrentManager extends TorrentManager {
         }
       }
 
-      // Fall back to public trackers
+      // Add popular default trackers immediately
+      const defaultTrackers = [
+        'udp://tracker.opentrackr.org:1337/announce',
+        'udp://open.stealth.si:80/announce',
+        'udp://tracker.coppersurfer.tk:6969/announce',
+        'udp://exodus.desync.com:6969/announce',
+        'udp://tracker.cyberia.is:6969/announce',
+        'udp://tracker.torrent.eu.org:451/announce',
+        'udp://tracker.moeking.me:6969/announce',
+        'udp://9.rarbg.to:2710/announce',
+      ];
+      for (final tr in defaultTrackers) {
+        final tUri = Uri.tryParse(tr);
+        if (tUri != null) {
+          tracker.runTracker(tUri, infoHashBuffer);
+        }
+      }
+
+      // Fall back to public trackers list
       final trackersSubscription = findPublicTrackers().listen((urls) {
         if (metaCompleter.isCompleted) return;
         for (final u in urls) {
@@ -664,9 +682,9 @@ class RealTorrentManager extends TorrentManager {
   Future<String> _getSavePath() async {
     try {
       final dir = await getApplicationDocumentsDirectory();
-      return '${dir.path}/TorrentFlow';
+      return dir.path;
     } catch (_) {
-      return '/TorrentFlow';
+      return '/';
     }
   }
 

@@ -50,20 +50,29 @@ import BackgroundTasks
 
   // MARK: - Storage Info
   private func getStorageInfo() -> [String: Int64] {
-    let fileManager = FileManager.default
     guard let path = NSSearchPathForDirectoriesInDomains(
       .documentDirectory, .userDomainMask, true
     ).first else {
       return ["freeSpace": 0, "totalSpace": 0]
     }
 
+    let url = URL(fileURLWithPath: path)
     do {
-      let attributes = try fileManager.attributesOfFileSystem(forPath: path)
-      let freeSpace = (attributes[.systemFreeSize] as? NSNumber)?.int64Value ?? 0
-      let totalSpace = (attributes[.systemSize] as? NSNumber)?.int64Value ?? 0
+      let values = try url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeTotalCapacityKey])
+      let freeSpace = values.volumeAvailableCapacityForImportantUsage ?? 0
+      let totalSpace = Int64(values.volumeTotalCapacity ?? 0)
       return ["freeSpace": freeSpace, "totalSpace": totalSpace]
     } catch {
-      return ["freeSpace": 0, "totalSpace": 0]
+      // Fallback to basic attributes
+      let fileManager = FileManager.default
+      do {
+        let attributes = try fileManager.attributesOfFileSystem(forPath: path)
+        let freeSpace = (attributes[.systemFreeSize] as? NSNumber)?.int64Value ?? 0
+        let totalSpace = (attributes[.systemSize] as? NSNumber)?.int64Value ?? 0
+        return ["freeSpace": freeSpace, "totalSpace": totalSpace]
+      } catch {
+        return ["freeSpace": 0, "totalSpace": 0]
+      }
     }
   }
 

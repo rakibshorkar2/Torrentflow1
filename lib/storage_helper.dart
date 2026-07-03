@@ -61,8 +61,8 @@ class StorageInfo {
     const units = ['B', 'KB', 'MB', 'GB', 'TB'];
     int unitIndex = 0;
     double value = bytes.toDouble();
-    while (value >= 1024 && unitIndex < units.length - 1) {
-      value /= 1024;
+    while (value >= 1000 && unitIndex < units.length - 1) {
+      value /= 1000;
       unitIndex++;
     }
     if (value >= 100) {
