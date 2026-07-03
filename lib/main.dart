@@ -309,11 +309,11 @@ class _TabItem extends StatelessWidget {
                   padding: const EdgeInsets.all(6),
                   decoration: isSelected
                       ? BoxDecoration(
-                          color: TFColors.accentCyan.withOpacity(0.15),
+                          color: TFColors.accentCyan.withValues(alpha: 0.15),
                           borderRadius: BorderRadius.circular(10),
                           boxShadow: [
                             BoxShadow(
-                              color: TFColors.accentCyan.withOpacity(0.2),
+                              color: TFColors.accentCyan.withValues(alpha: 0.2),
                               blurRadius: 12,
                               spreadRadius: -2,
                             ),
@@ -437,10 +437,13 @@ class _DownloadsTabState extends State<DownloadsTab>
         final downloading = torrents
             .where((t) =>
                 t.status == TorrentStatus.downloading ||
-                t.status == TorrentStatus.queued)
+                t.status == TorrentStatus.queued ||
+                t.status == TorrentStatus.error)
             .toList();
         final completed = torrents
-            .where((t) => t.status == TorrentStatus.completed)
+            .where((t) =>
+                t.status == TorrentStatus.completed ||
+                t.status == TorrentStatus.seeding)
             .toList();
         final paused = torrents
             .where((t) => t.status == TorrentStatus.paused)
@@ -656,7 +659,9 @@ class _DownloadsTabState extends State<DownloadsTab>
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
                   child: SectionHeader(
-                    title: 'Completed (${completed.length})',
+                    title: completed.any((t) => t.status == TorrentStatus.seeding)
+                        ? 'Completed & Seeding (${completed.length})'
+                        : 'Completed (${completed.length})',
                     isDark: isDark,
                   ),
                 ),
@@ -819,7 +824,7 @@ class _SpeedReadout extends StatelessWidget {
             TextSpan(
               text: ' ${parts[1]}',
               style: TextStyle(
-                color: color.withOpacity(0.7),
+                color: color.withValues(alpha: 0.7),
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
               ),
@@ -904,6 +909,21 @@ class _TorrentCard extends StatelessWidget {
                 ],
               ),
             ),
+          if (torrent.status == TorrentStatus.error)
+            CupertinoActionSheetAction(
+              onPressed: () {
+                Navigator.pop(context);
+                torrentManager.resumeTorrent(torrent.id);
+              },
+              child: const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(CupertinoIcons.arrow_2_circlepath, color: CupertinoColors.activeBlue),
+                  SizedBox(width: 8),
+                  Text('Retry', style: TextStyle(color: CupertinoColors.activeBlue)),
+                ],
+              ),
+            ),
           CupertinoActionSheetAction(
             isDestructiveAction: true,
             onPressed: () {
@@ -930,7 +950,7 @@ class _TorrentCard extends StatelessWidget {
       margin: const EdgeInsets.fromLTRB(20, 0, 20, 10),
       padding: const EdgeInsets.all(16),
       accentBorderColor: torrent.status == TorrentStatus.downloading
-          ? TFColors.accentCyan.withOpacity(0.3)
+          ? TFColors.accentCyan.withValues(alpha: 0.3)
           : null,
       onTap: () => _showActions(context),
       child: Column(
@@ -1019,6 +1039,21 @@ class _TorrentCard extends StatelessWidget {
                   color: TFColors.accentAmber,
                   isDark: isDark,
                 ),
+              if (torrent.status == TorrentStatus.seeding) ...[
+                SpeedChip(
+                  label: 'Seeding',
+                  icon: CupertinoIcons.arrow_up_circle,
+                  color: TFColors.accentGreen,
+                  isDark: isDark,
+                ),
+                const SizedBox(width: 6),
+                SpeedChip(
+                  label: torrent.formattedUploadSpeed,
+                  icon: CupertinoIcons.arrow_up,
+                  color: TFColors.accentGreen,
+                  isDark: isDark,
+                ),
+              ],
               if (torrent.status == TorrentStatus.queued)
                 SpeedChip(
                   label: torrent.name.startsWith('Metadata') || torrent.totalSize == 0
@@ -1039,7 +1074,8 @@ class _TorrentCard extends StatelessWidget {
           ),
 
           // ── Peers & Seeds ─────────────────────────────────────────────
-          if (torrent.status == TorrentStatus.downloading) ...[
+          if (torrent.status == TorrentStatus.downloading ||
+              torrent.status == TorrentStatus.seeding) ...[
             const SizedBox(height: 6),
             Row(
               children: [
@@ -1096,12 +1132,12 @@ class _EmptyState extends StatelessWidget {
               shape: BoxShape.circle,
               gradient: RadialGradient(
                 colors: [
-                  TFColors.accentCyan.withOpacity(0.12),
+                  TFColors.accentCyan.withValues(alpha: 0.12),
                   Colors.transparent,
                 ],
               ),
               border: Border.all(
-                color: TFColors.accentCyan.withOpacity(0.2),
+                color: TFColors.accentCyan.withValues(alpha: 0.2),
                 width: 1,
               ),
             ),
@@ -1823,7 +1859,7 @@ class _SettingsRow extends StatelessWidget {
           Container(
             padding: const EdgeInsets.all(7),
             decoration: BoxDecoration(
-              color: iconColor.withOpacity(0.15),
+              color: iconColor.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(9),
             ),
             child: Icon(icon, color: iconColor, size: 18),

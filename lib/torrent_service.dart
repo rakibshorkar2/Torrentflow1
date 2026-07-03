@@ -339,7 +339,11 @@ class RealTorrentManager extends TorrentManager {
           }
         });
 
-      metaDl.startDownload();
+      try {
+        await metaDl.startDownload();
+      } catch (e) {
+        debugPrint('[TorrentManager] DHT bootstrap skipped: $e');
+      }
 
       // ── Step 2: Use trackers to speed up peer discovery ───────────────────
       final infoHashBuffer = Uint8List.fromList(_hexToBytes(infoHash));

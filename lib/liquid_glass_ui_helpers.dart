@@ -161,7 +161,7 @@ class _GlowBlob extends StatelessWidget {
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         gradient: RadialGradient(
-          colors: [color.withOpacity(opacity), Colors.transparent],
+          colors: [color.withValues(alpha: opacity), Colors.transparent],
           stops: const [0.0, 1.0],
         ),
       ),
@@ -224,13 +224,13 @@ class GlassCard extends StatelessWidget {
             ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(isDark ? 0.3 : 0.08),
+                color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.08),
                 blurRadius: 20,
                 offset: const Offset(0, 8),
               ),
               if (accentBorderColor != null)
                 BoxShadow(
-                  color: accentBorderColor!.withOpacity(0.15),
+                  color: accentBorderColor!.withValues(alpha: 0.15),
                   blurRadius: 24,
                   spreadRadius: -4,
                 ),
@@ -296,14 +296,14 @@ class NeonProgressBar extends StatelessWidget {
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     colors: [
-                      color.withOpacity(0.8),
+                      color.withValues(alpha: 0.8),
                       color,
                     ],
                   ),
                   borderRadius: BorderRadius.circular(height / 2),
                   boxShadow: [
                     BoxShadow(
-                      color: color.withOpacity(0.5),
+                      color: color.withValues(alpha: 0.5),
                       blurRadius: 8,
                       spreadRadius: -1,
                     ),
@@ -464,8 +464,8 @@ class _GlassButtonState extends State<GlassButton>
                   end: Alignment.bottomRight,
                   colors: widget.accentColor != null
                       ? [
-                          widget.accentColor!.withOpacity(0.35),
-                          widget.accentColor!.withOpacity(0.15),
+                          widget.accentColor!.withValues(alpha: 0.35),
+                          widget.accentColor!.withValues(alpha: 0.15),
                         ]
                       : widget.isDark
                           ? [
@@ -479,7 +479,7 @@ class _GlassButtonState extends State<GlassButton>
                 ),
                 borderRadius: BorderRadius.circular(14),
                 border: Border.all(
-                  color: widget.accentColor?.withOpacity(0.6) ??
+                  color: widget.accentColor?.withValues(alpha: 0.6) ??
                       (widget.isDark
                           ? TFColors.glassBorder
                           : TFColors.glassBorderLight),
@@ -488,7 +488,7 @@ class _GlassButtonState extends State<GlassButton>
                 boxShadow: widget.accentColor != null
                     ? [
                         BoxShadow(
-                          color: widget.accentColor!.withOpacity(0.25),
+                          color: widget.accentColor!.withValues(alpha: 0.25),
                           blurRadius: 16,
                           spreadRadius: -2,
                         )
@@ -527,9 +527,9 @@ class SpeedChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withOpacity(0.3), width: 0.6),
+        border: Border.all(color: color.withValues(alpha: 0.3), width: 0.6),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
