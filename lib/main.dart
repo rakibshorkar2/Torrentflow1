@@ -42,12 +42,12 @@ class TorrentFlowApp extends StatefulWidget {
 }
 
 class _TorrentFlowAppState extends State<TorrentFlowApp> {
-  late final SimulatedTorrentManager _torrentManager;
+  late final RealTorrentManager _torrentManager;
 
   @override
   void initState() {
     super.initState();
-    _torrentManager = SimulatedTorrentManager();
+    _torrentManager = RealTorrentManager();
     _torrentManager.initialize();
     widget.settings.addListener(_onSettingsChanged);
   }
@@ -102,7 +102,7 @@ class _TorrentFlowAppState extends State<TorrentFlowApp> {
 
 class MainShell extends StatefulWidget {
   final SettingsProvider settings;
-  final SimulatedTorrentManager torrentManager;
+  final TorrentManager torrentManager;
   final bool isDark;
 
   const MainShell({
@@ -171,7 +171,7 @@ class _GlassTabBar extends StatelessWidget {
   final int selectedIndex;
   final bool isDark;
   final ValueChanged<int> onTap;
-  final SimulatedTorrentManager torrentManager;
+  final TorrentManager torrentManager;
 
   const _GlassTabBar({
     required this.selectedIndex,
@@ -361,7 +361,7 @@ class _TabItem extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class DownloadsTab extends StatefulWidget {
-  final SimulatedTorrentManager torrentManager;
+  final TorrentManager torrentManager;
   final bool isDark;
 
   const DownloadsTab({
@@ -694,7 +694,7 @@ class _DownloadsTabState extends State<DownloadsTab>
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _GlobalSpeedCard extends StatelessWidget {
-  final SimulatedTorrentManager torrentManager;
+  final TorrentManager torrentManager;
   final bool isDark;
 
   const _GlobalSpeedCard({required this.torrentManager, required this.isDark});
@@ -845,7 +845,7 @@ class _SpeedReadout extends StatelessWidget {
 class _TorrentCard extends StatelessWidget {
   final TorrentItem torrent;
   final bool isDark;
-  final SimulatedTorrentManager torrentManager;
+  final TorrentManager torrentManager;
 
   const _TorrentCard({
     required this.torrent,

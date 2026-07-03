@@ -1,8 +1,12 @@
 import 'dart:async';
-import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
+import 'package:dtorrent_parser/dtorrent_parser.dart';
+import 'package:dtorrent_task/dtorrent_task.dart';
+import 'package:dtorrent_tracker/dtorrent_tracker.dart';
+import 'package:dtorrent_common/dtorrent_common.dart';
+import 'package:events_emitter2/events_emitter2.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Domain Models
@@ -140,17 +144,39 @@ abstract class TorrentManager extends ChangeNotifier {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Simulated TorrentManager (for UI testing & real device demo)
+// Internal handle for a live TorrentTask
 // ─────────────────────────────────────────────────────────────────────────────
 
-class SimulatedTorrentManager extends TorrentManager {
+class _TorrentHandle {
+  final String id;
+  final TorrentTask task;
+  EventsListener<TaskEvent>? listener;
+  Timer? pollTimer;
+
+  _TorrentHandle({required this.id, required this.task});
+
+  void cancel() {
+    pollTimer?.cancel();
+    listener?.dispose();
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Real TorrentManager — uses dtorrent_task for actual P2P downloading
+// ─────────────────────────────────────────────────────────────────────────────
+
+class RealTorrentManager extends TorrentManager {
   final _uuid = const Uuid();
-  final _random = Random();
 
   final List<TorrentItem> _torrents = [];
-  final Map<String, Timer> _simulators = {};
+  final Map<String, _TorrentHandle> _handles = {};
 
-  int _downloadSpeedLimit = 0;
+  // Trackers and downloaders during metadata resolution phase
+  final Map<String, MetadataDownloader> _activeMetadataDownloaders = {};
+  final Map<String, TorrentAnnounceTracker> _activeMetadataTrackers = {};
+  final Map<String, StreamSubscription> _activeMetadataSubscriptions = {};
+
+  int _downloadSpeedLimit = 0; // KB/s, 0 = unlimited
   int _uploadSpeedLimit = 0;
   bool _seedingEnabled = true;
 
@@ -177,146 +203,393 @@ class SimulatedTorrentManager extends TorrentManager {
 
   @override
   Future<void> initialize() async {
-    // Pre-populate with some demo torrents
-    await addMagnetLink(
-      'magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&dn=Big+Buck+Bunny&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337',
-    );
-    await addMagnetLink(
-      'magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10&dn=Sintel&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337',
-    );
+    // Loaded dynamically via manual user action
+  }
+
+  /// Convert standard base32 string to standard hex hash string
+  static String _base32ToHex(String base32) {
+    const chars = 'abcdefghijklmnopqrstuvwxyz234567';
+    var bits = '';
+    for (var i = 0; i < base32.length; i++) {
+      final char = base32[i];
+      final val = chars.indexOf(char);
+      if (val < 0) continue;
+      bits += val.toRadixString(2).padLeft(5, '0');
+    }
+    var hex = '';
+    for (var i = 0; i + 4 <= bits.length; i += 4) {
+      final chunk = bits.substring(i, i + 4);
+      hex += int.parse(chunk, radix: 2).toRadixString(16);
+    }
+    return hex;
+  }
+
+  /// Extracts a lowercase hex info-hash from a magnet URI.
+  String? _extractInfoHash(String magnetUri) {
+    String? hash;
+    final uri = Uri.tryParse(magnetUri);
+    if (uri != null) {
+      final xt = uri.queryParameters['xt'];
+      if (xt != null && xt.startsWith('urn:btih:')) {
+        hash = xt.substring('urn:btih:'.length).toLowerCase();
+      }
+    }
+    if (hash == null) {
+      final match = RegExp(r'urn:btih:([a-zA-Z0-9]{32,40})', caseSensitive: false)
+          .firstMatch(magnetUri);
+      hash = match?.group(1)?.toLowerCase();
+    }
+
+    if (hash == null) return null;
+
+    if (hash.length == 32) {
+      return _base32ToHex(hash);
+    } else if (hash.length == 40) {
+      return hash;
+    }
+    return null;
+  }
+
+  /// Extracts human-readable display name from a magnet URI.
+  String _extractName(String magnetUri) {
+    final uri = Uri.tryParse(magnetUri);
+    if (uri != null) {
+      final dn = uri.queryParameters['dn'];
+      if (dn != null && dn.isNotEmpty) return dn;
+    }
+    final match = RegExp(r'[?&]dn=([^&]+)').firstMatch(magnetUri);
+    if (match != null) {
+      return Uri.decodeComponent(match.group(1)!.replaceAll('+', ' '));
+    }
+    return 'Unknown Torrent';
   }
 
   @override
   Future<TorrentItem?> addMagnetLink(String magnetUri) async {
-    // Parse display name from magnet URI
-    final dnMatch = RegExp(r'[?&]dn=([^&]+)').firstMatch(magnetUri);
-    String name = 'Unknown Torrent';
-    if (dnMatch != null) {
-      name = Uri.decodeComponent(dnMatch.group(1)!.replaceAll('+', ' '));
+    final infoHash = _extractInfoHash(magnetUri);
+    if (infoHash == null || infoHash.isEmpty) {
+      debugPrint('[TorrentManager] Invalid magnet URI: $magnetUri');
+      return null;
+    }
+
+    if (_torrents.any((t) => _extractInfoHash(t.magnetLink) == infoHash)) {
+      debugPrint('[TorrentManager] Duplicate: $infoHash');
+      return null;
     }
 
     final id = _uuid.v4();
-    final totalSize = (500 + _random.nextInt(9500)) * 1024 * 1024; // 500 MB–10 GB
-
-    // Generate random file list
-    final fileNames = _generateFileList(name);
-    final files = fileNames.map((fn) {
-      final size = (10 + _random.nextInt(990)) * 1024 * 1024;
-      return TorrentFile(name: fn, size: size);
-    }).toList();
-
+    final name = _extractName(magnetUri);
     final savePath = await _getSavePath();
 
     final item = TorrentItem(
       id: id,
       name: name,
       magnetLink: magnetUri,
-      status: TorrentStatus.downloading,
-      progress: 0.0,
-      totalSize: totalSize,
-      downloaded: 0,
-      peers: 5 + _random.nextInt(45),
-      seeds: 2 + _random.nextInt(20),
+      status: TorrentStatus.queued,
       savePath: savePath,
-      files: files,
     );
-
     _torrents.add(item);
     notifyListeners();
 
-    // Start simulator
-    _startSimulator(id);
+    _startDownload(id, infoHash, magnetUri, savePath);
     return item;
   }
 
-  void _startSimulator(String id) {
-    _simulators[id]?.cancel();
-    _simulators[id] = Timer.periodic(const Duration(milliseconds: 500), (t) {
-      final index = _torrents.indexWhere((e) => e.id == id);
-      if (index < 0) {
-        t.cancel();
+  void _updateItem(String id, TorrentItem Function(TorrentItem) fn) {
+    final idx = _torrents.indexWhere((t) => t.id == id);
+    if (idx < 0) return;
+    _torrents[idx] = fn(_torrents[idx]);
+    _recalcGlobalSpeeds();
+    notifyListeners();
+  }
+
+  Future<void> _startDownload(
+    String id,
+    String infoHash,
+    String magnetUri,
+    String savePath,
+  ) async {
+    debugPrint('[TorrentManager] Resolving metadata: $infoHash');
+
+    try {
+      // ── Step 1: Download torrent metadata via BEP-09 ──────────────────────
+      final metaDl = MetadataDownloader(infoHash);
+      final metaListener = metaDl.createListener();
+      final metaCompleter = Completer<Torrent>();
+
+      _activeMetadataDownloaders[id] = metaDl;
+
+      metaListener
+        ..on<MetaDataDownloadComplete>((event) async {
+          if (metaCompleter.isCompleted) return;
+          try {
+            final model = await Torrent.parseFromBytes(
+              Uint8List.fromList(event.data),
+            );
+            metaCompleter.complete(model);
+          } catch (e) {
+            if (!metaCompleter.isCompleted) {
+              metaCompleter.completeError('Parse failed: $e');
+            }
+          }
+        })
+        ..on<MetaDataDownloadFailed>((event) {
+          if (!metaCompleter.isCompleted) {
+            metaCompleter.completeError('Metadata download failed');
+          }
+        });
+
+      metaDl.startDownload();
+
+      // ── Step 2: Use trackers to speed up peer discovery ───────────────────
+      final infoHashBuffer = Uint8List.fromList(_hexToBytes(infoHash));
+      final tracker = TorrentAnnounceTracker(metaDl);
+      final trackerListener = tracker.createListener();
+
+      _activeMetadataTrackers[id] = tracker;
+
+      trackerListener.on<AnnouncePeerEventEvent>((event) {
+        if (event.event == null) return;
+        for (final peer in event.event!.peers) {
+          metaDl.addNewPeerAddress(peer, PeerSource.tracker);
+        }
+      });
+
+      // Add trackers from the magnet URI
+      final magUri = Uri.tryParse(magnetUri);
+      if (magUri != null) {
+        for (final tr in (magUri.queryParametersAll['tr'] ?? [])) {
+          final tUri = Uri.tryParse(tr);
+          if (tUri != null) {
+            tracker.runTracker(tUri, infoHashBuffer);
+          }
+        }
+      }
+
+      // Fall back to public trackers
+      final trackersSubscription = findPublicTrackers().listen((urls) {
+        if (metaCompleter.isCompleted) return;
+        for (final u in urls) {
+          try {
+            tracker.runTracker(u, infoHashBuffer);
+          } catch (_) {}
+        }
+      });
+      _activeMetadataSubscriptions[id] = trackersSubscription;
+
+      // ── Step 3: Await metadata (90 s timeout) ─────────────────────────────
+      Torrent torrentModel;
+      try {
+        torrentModel =
+            await metaCompleter.future.timeout(const Duration(seconds: 90));
+      } catch (e) {
+        debugPrint('[TorrentManager] Metadata failed: $e');
+        trackersSubscription.cancel();
+        tracker.stop(true);
+        metaDl.stop();
+        metaListener.dispose();
+        trackerListener.dispose();
+        
+        _activeMetadataDownloaders.remove(id);
+        _activeMetadataTrackers.remove(id);
+        _activeMetadataSubscriptions.remove(id);
+
+        _updateItem(
+          id,
+          (t) => t.copyWith(
+            status: TorrentStatus.error,
+            error: 'Could not fetch metadata. Check internet connection.',
+          ),
+        );
         return;
       }
 
-      final torrent = _torrents[index];
-      if (torrent.status == TorrentStatus.paused ||
-          torrent.status == TorrentStatus.completed) {
+      trackersSubscription.cancel();
+      tracker.stop(true);
+      metaDl.stop();
+      metaListener.dispose();
+      trackerListener.dispose();
+
+      _activeMetadataDownloaders.remove(id);
+      _activeMetadataTrackers.remove(id);
+      _activeMetadataSubscriptions.remove(id);
+
+      // Verify that the torrent was not removed by the user while loading metadata
+      if (!_torrents.any((t) => t.id == id)) {
         return;
       }
 
-      // Simulate fluctuating speed (1–8 MB/s download)
-      final baseSpeed = (1024 + _random.nextInt(7 * 1024)) * 1024;
-      final limitedSpeed = _downloadSpeedLimit > 0
-          ? min(baseSpeed, _downloadSpeedLimit * 1024)
-          : baseSpeed;
+      // Build file list from real metadata
+      final torrentFiles = torrentModel.files.map((f) {
+        return TorrentFile(name: f.name, size: f.length);
+      }).toList();
 
-      final uploadSpeed =
-          _seedingEnabled ? (100 + _random.nextInt(900)) * 1024 : 0;
-
-      final newDownloaded =
-          min(torrent.downloaded + limitedSpeed ~/ 2, torrent.totalSize);
-      final newProgress = newDownloaded / torrent.totalSize;
-      final isDone = newDownloaded >= torrent.totalSize;
-
-      _torrents[index] = torrent.copyWith(
-        downloaded: newDownloaded,
-        progress: newProgress,
-        downloadSpeed: isDone ? 0 : limitedSpeed,
-        uploadSpeed: isDone && _seedingEnabled ? uploadSpeed : 0,
-        status: isDone ? TorrentStatus.completed : TorrentStatus.downloading,
-        peers: isDone ? 0 : (5 + _random.nextInt(45)),
-        seeds: isDone ? 0 : (2 + _random.nextInt(20)),
+      _updateItem(
+        id,
+        (t) => t.copyWith(
+          name: torrentModel.name,
+          status: TorrentStatus.downloading,
+          totalSize: torrentModel.length,
+          files: torrentFiles,
+          savePath: savePath,
+        ),
       );
 
-      // Recalculate global speeds
-      _recalcGlobalSpeeds();
-      notifyListeners();
+      // ── Step 4: Start the download task ───────────────────────────────────
+      final task = TorrentTask.newTask(torrentModel, savePath);
+      final handle = _TorrentHandle(id: id, task: task);
+      _handles[id] = handle;
 
-      if (isDone) t.cancel();
-    });
+      handle.listener = task.createListener();
+      handle.listener!
+        ..on<TaskCompleted>((event) {
+          debugPrint('[TorrentManager] Completed: $id');
+          handle.pollTimer?.cancel();
+          _updateItem(
+            id,
+            (t) => t.copyWith(
+              status: _seedingEnabled
+                  ? TorrentStatus.seeding
+                  : TorrentStatus.completed,
+              progress: 1.0,
+              downloadSpeed: 0,
+              peers: 0,
+            ),
+          );
+          if (!_seedingEnabled) task.stop();
+        })
+        ..on<TaskStopped>((event) {
+          handle.pollTimer?.cancel();
+        });
+
+      await task.start();
+
+      // ── Step 5: Poll stats every second ───────────────────────────────────
+      handle.pollTimer = Timer.periodic(
+        const Duration(seconds: 1),
+        (_) => _pollTask(id),
+      );
+    } catch (e, st) {
+      debugPrint('[TorrentManager] Error: $e\n$st');
+      _activeMetadataDownloaders.remove(id);
+      _activeMetadataTrackers.remove(id);
+      _activeMetadataSubscriptions.remove(id);
+
+      _updateItem(
+        id,
+        (t) => t.copyWith(status: TorrentStatus.error, error: e.toString()),
+      );
+    }
   }
 
-  void _recalcGlobalSpeeds() {
-    _globalDownloadSpeed = _torrents
-        .where((t) => t.status == TorrentStatus.downloading)
-        .fold(0, (s, t) => s + t.downloadSpeed);
-    _globalUploadSpeed = _torrents
-        .where((t) =>
-            t.status == TorrentStatus.completed ||
-            t.status == TorrentStatus.seeding)
-        .fold(0, (s, t) => s + t.uploadSpeed);
-  }
+  void _pollTask(String id) {
+    final handle = _handles[id];
+    if (handle == null) return;
 
-  @override
-  Future<void> pauseTorrent(String id) async {
-    final index = _torrents.indexWhere((t) => t.id == id);
-    if (index < 0) return;
-    _torrents[index] = _torrents[index].copyWith(
-      status: TorrentStatus.paused,
-      downloadSpeed: 0,
-      uploadSpeed: 0,
+    final task = handle.task;
+    final idx = _torrents.indexWhere((t) => t.id == id);
+    if (idx < 0) return;
+
+    final current = _torrents[idx];
+    if (current.status == TorrentStatus.completed ||
+        current.status == TorrentStatus.error) {
+      return;
+    }
+
+    final rawDl = (task.currentDownloadSpeed * 1024).toInt();
+    final rawUp = (task.uploadSpeed * 1024).toInt();
+
+    final effectiveDl = _downloadSpeedLimit > 0
+        ? rawDl.clamp(0, _downloadSpeedLimit * 1024)
+        : rawDl;
+    final effectiveUp = _seedingEnabled
+        ? (_uploadSpeedLimit > 0
+            ? rawUp.clamp(0, _uploadSpeedLimit * 1024)
+            : rawUp)
+        : 0;
+
+    final progress = task.progress.clamp(0.0, 1.0);
+    final totalSize = task.metaInfo.length;
+    final downloaded = (progress * totalSize).toInt();
+
+    final newStatus = current.status == TorrentStatus.paused
+        ? TorrentStatus.paused
+        : (progress >= 1.0
+            ? (_seedingEnabled ? TorrentStatus.seeding : TorrentStatus.completed)
+            : TorrentStatus.downloading);
+
+    _torrents[idx] = current.copyWith(
+      status: newStatus,
+      progress: progress,
+      downloadSpeed: effectiveDl,
+      uploadSpeed: effectiveUp,
+      totalSize: totalSize,
+      downloaded: downloaded,
+      peers: task.connectedPeersNumber,
+      seeds: task.seederNumber,
     );
-    _simulators[id]?.cancel();
+
     _recalcGlobalSpeeds();
     notifyListeners();
   }
 
   @override
-  Future<void> resumeTorrent(String id) async {
-    final index = _torrents.indexWhere((t) => t.id == id);
-    if (index < 0) return;
-    if (_torrents[index].progress >= 1.0) return;
-    _torrents[index] = _torrents[index].copyWith(
-      status: TorrentStatus.downloading,
+  Future<void> pauseTorrent(String id) async {
+    // Stop metadata downloader if active
+    final metaDl = _activeMetadataDownloaders.remove(id);
+    final metaTracker = _activeMetadataTrackers.remove(id);
+    final metaSub = _activeMetadataSubscriptions.remove(id);
+    metaDl?.stop();
+    metaTracker?.stop(true);
+    metaSub?.cancel();
+
+    _handles[id]?.task.pause();
+    _updateItem(
+      id,
+      (t) => t.copyWith(
+        status: TorrentStatus.paused,
+        downloadSpeed: 0,
+        uploadSpeed: 0,
+      ),
     );
-    _startSimulator(id);
-    notifyListeners();
+  }
+
+  @override
+  Future<void> resumeTorrent(String id) async {
+    final idx = _torrents.indexWhere((t) => t.id == id);
+    if (idx < 0) return;
+    if (_torrents[idx].progress >= 1.0) return;
+
+    final handle = _handles[id];
+    if (handle != null) {
+      handle.task.resume();
+      _updateItem(id, (t) => t.copyWith(status: TorrentStatus.downloading));
+    } else {
+      // If it was paused during metadata resolution, restart it
+      final infoHash = _extractInfoHash(_torrents[idx].magnetLink);
+      if (infoHash != null && infoHash.isNotEmpty) {
+        _updateItem(id, (t) => t.copyWith(status: TorrentStatus.queued, error: null));
+        _startDownload(id, infoHash, _torrents[idx].magnetLink, _torrents[idx].savePath ?? await _getSavePath());
+      }
+    }
   }
 
   @override
   Future<void> removeTorrent(String id, {bool deleteFiles = false}) async {
-    _simulators[id]?.cancel();
-    _simulators.remove(id);
+    // Abort metadata downloader if active
+    final metaDl = _activeMetadataDownloaders.remove(id);
+    final metaTracker = _activeMetadataTrackers.remove(id);
+    final metaSub = _activeMetadataSubscriptions.remove(id);
+    metaDl?.stop();
+    metaTracker?.stop(true);
+    metaSub?.cancel();
+
+    final handle = _handles.remove(id);
+    handle?.cancel();
+    try {
+      await handle?.task.stop();
+      await handle?.task.dispose();
+    } catch (_) {}
     _torrents.removeWhere((t) => t.id == id);
     _recalcGlobalSpeeds();
     notifyListeners();
@@ -338,20 +611,53 @@ class SimulatedTorrentManager extends TorrentManager {
   Future<void> setSeedingEnabled(bool enabled) async {
     _seedingEnabled = enabled;
     if (!enabled) {
-      for (var i = 0; i < _torrents.length; i++) {
-        if (_torrents[i].status == TorrentStatus.seeding) {
-          _torrents[i] = _torrents[i].copyWith(uploadSpeed: 0);
+      for (final entry in _handles.entries) {
+        final idx = _torrents.indexWhere((t) => t.id == entry.key);
+        if (idx >= 0 && _torrents[idx].status == TorrentStatus.seeding) {
+          entry.value.task.stop();
+          _torrents[idx] = _torrents[idx].copyWith(
+            status: TorrentStatus.completed,
+            uploadSpeed: 0,
+          );
         }
       }
+      _recalcGlobalSpeeds();
+      notifyListeners();
     }
-    notifyListeners();
+  }
+
+  void _recalcGlobalSpeeds() {
+    _globalDownloadSpeed = _torrents
+        .where((t) => t.status == TorrentStatus.downloading)
+        .fold(0, (s, t) => s + t.downloadSpeed);
+    _globalUploadSpeed = _torrents
+        .where((t) =>
+            t.status == TorrentStatus.completed ||
+            t.status == TorrentStatus.seeding)
+        .fold(0, (s, t) => s + t.uploadSpeed);
   }
 
   @override
   void dispose() {
-    for (final t in _simulators.values) {
-      t.cancel();
+    for (final handle in _handles.values) {
+      handle.cancel();
+      handle.task.stop();
     }
+    _handles.clear();
+
+    for (final d in _activeMetadataDownloaders.values) {
+      d.stop();
+    }
+    for (final t in _activeMetadataTrackers.values) {
+      t.stop(true);
+    }
+    for (final s in _activeMetadataSubscriptions.values) {
+      s.cancel();
+    }
+    _activeMetadataDownloaders.clear();
+    _activeMetadataTrackers.clear();
+    _activeMetadataSubscriptions.clear();
+
     super.dispose();
   }
 
@@ -364,15 +670,11 @@ class SimulatedTorrentManager extends TorrentManager {
     }
   }
 
-  List<String> _generateFileList(String torrentName) {
-    final base = torrentName.replaceAll(' ', '.');
-    final count = 1 + _random.nextInt(5);
-    if (count == 1) {
-      return ['$base.mkv'];
+  static List<int> _hexToBytes(String hex) {
+    final result = <int>[];
+    for (var i = 0; i < hex.length - 1; i += 2) {
+      result.add(int.parse(hex.substring(i, i + 2), radix: 16));
     }
-    return List.generate(count, (i) {
-      final ext = ['mkv', 'mp4', 'avi', 'srt', 'nfo'][_random.nextInt(5)];
-      return '${base}_part${i + 1}.$ext';
-    });
+    return result;
   }
 }

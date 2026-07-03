@@ -33,10 +33,9 @@ import BackgroundTasks
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
 
     // Setup Storage MethodChannel
-    guard let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "TorrentFlow") else { return }
     storageChannel = FlutterMethodChannel(
       name: "com.torrentflow.app/storage",
-      binaryMessenger: registrar.messenger()
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
     )
 
     storageChannel?.setMethodCallHandler { [weak self] (call, result) in
