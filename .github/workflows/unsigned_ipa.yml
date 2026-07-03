@@ -1,0 +1,99 @@
+name: Build Unsigned IPA
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-ios:
+    name: Build iOS Unsigned IPA
+    runs-on: macos-latest
+
+    env:
+      FLUTTER_VERSION: "3.32.0"
+      IPA_NAME: "TorrentFlow-unsigned.ipa"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+
+      - name: Analyze code
+        run: flutter analyze --no-fatal-infos
+        continue-on-error: true
+
+      - name: Build iOS (no code sign)
+        run: |
+          flutter build ios \
+            --release \
+            --no-codesign \
+            --no-tree-shake-icons
+
+      - name: Package unsigned IPA
+        run: |
+          mkdir -p build/ios/iphoneos/Payload
+          cp -r build/ios/iphoneos/Runner.app build/ios/iphoneos/Payload/Runner.app
+          cd build/ios/iphoneos
+          zip -r "${{ env.IPA_NAME }}" Payload/
+          echo "IPA created: $(pwd)/${{ env.IPA_NAME }}"
+          ls -lh "${{ env.IPA_NAME }}"
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.IPA_NAME }}
+          path: build/ios/iphoneos/${{ env.IPA_NAME }}
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/ios/iphoneos/${{ env.IPA_NAME }}
+          generate_release_notes: true
+
+      - name: Sideloading Instructions
+        run: |
+          echo ""
+          echo "═══════════════════════════════════════════════════════"
+          echo "  ✅ TorrentFlow Unsigned IPA built successfully!"
+          echo "═══════════════════════════════════════════════════════"
+          echo ""
+          echo "  To sideload on iPhone 15 Pro (iOS 26.5):"
+          echo ""
+          echo "  Option 1 — AltStore (free, requires PC/Mac):"
+          echo "    1. Install AltStore on your PC/Mac and iPhone"
+          echo "    2. Download the IPA from this workflow's Artifacts"
+          echo "    3. Open AltStore on iPhone → tap + → select the IPA"
+          echo ""
+          echo "  Option 2 — Sideloadly (free, requires PC/Mac):"
+          echo "    1. Install Sideloadly from sideloadly.io"
+          echo "    2. Connect iPhone via USB"
+          echo "    3. Drag and drop the IPA into Sideloadly"
+          echo "    4. Enter your Apple ID (free account works)"
+          echo ""
+          echo "  Option 3 — TrollStore (no PC required, for eligible iOS):"
+          echo "    1. Check TrollStore compatibility for iOS 26.5"
+          echo "    2. Install via trollstore.app instructions"
+          echo "    3. Use TrollStore to install the IPA directly"
+          echo ""
+          echo "  ⚠️  Free Apple IDs allow 3 apps, 7-day certificate validity."
+          echo "  ⚠️  Re-sign weekly using Sideloadly/AltStore to keep the app active."
+          echo "═══════════════════════════════════════════════════════"

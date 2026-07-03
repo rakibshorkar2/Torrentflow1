@@ -1,0 +1,46 @@
+name: torrentflow
+description: "TorrentFlow - A premium BitTorrent client for iPhone with iOS 26 Liquid Glass UI."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # iOS style icons
+  cupertino_icons: ^1.0.8
+
+  # BitTorrent engine (pure Dart)
+  dtorrent_task: ^0.4.1
+  dtorrent_parser: ^1.0.9
+
+  # File system paths (iOS Documents directory)
+  path_provider: ^2.1.2
+
+  # Persistent settings (theme, seeding, speed limits)
+  shared_preferences: ^2.2.2
+
+  # For detecting device info (iOS version etc.)
+  device_info_plus: ^10.1.0
+
+  # URL launcher for magnet link scheme handling
+  url_launcher: ^6.3.0
+
+  # Unique IDs for downloads
+  uuid: ^4.3.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+
+  # App icon assets
+  assets:
+    - assets/
