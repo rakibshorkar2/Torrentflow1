@@ -36,6 +36,9 @@ dependencies:
   # Unique IDs for downloads
   uuid: ^4.3.3
 
+  # File picking for local .torrent files
+  file_picker: ^8.0.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

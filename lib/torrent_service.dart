@@ -133,6 +133,7 @@ abstract class TorrentManager extends ChangeNotifier {
 
   Future<void> initialize();
   Future<TorrentItem?> addMagnetLink(String magnetUri);
+  Future<TorrentItem?> addTorrentFile(Uint8List fileBytes, String originalFileName);
   Future<void> pauseTorrent(String id);
   Future<void> resumeTorrent(String id);
   Future<void> removeTorrent(String id, {bool deleteFiles = false});
@@ -295,6 +296,78 @@ class RealTorrentManager extends TorrentManager {
     return item;
   }
 
+  @override
+  Future<TorrentItem?> addTorrentFile(Uint8List fileBytes, String originalFileName) async {
+    try {
+      final model = await Torrent.parseFromBytes(fileBytes);
+      final infoHash = model.infoHash.toLowerCase();
+
+      if (_torrents.any((t) => _extractInfoHash(t.magnetLink) == infoHash)) {
+        debugPrint('[TorrentManager] Torrent file already exists: $infoHash');
+        return null;
+      }
+
+      final id = _uuid.v4();
+      final savePath = await _getSavePath();
+
+      final torrentFiles = model.files.map((f) {
+        return TorrentFile(name: f.name, size: f.length);
+      }).toList();
+
+      final item = TorrentItem(
+        id: id,
+        name: model.name,
+        magnetLink: 'file://$originalFileName?xt=urn:btih:$infoHash',
+        status: TorrentStatus.downloading,
+        totalSize: model.length,
+        files: torrentFiles,
+        savePath: savePath,
+      );
+
+      _torrents.add(item);
+      notifyListeners();
+
+      // Start the BitTorrent engine directly
+      final task = TorrentTask.newTask(model, savePath);
+      final handle = _TorrentHandle(id: id, task: task);
+      _handles[id] = handle;
+
+      handle.listener = task.createListener();
+      handle.listener!
+        ..on<TaskCompleted>((event) {
+          debugPrint('[TorrentManager] Completed: $id');
+          handle.pollTimer?.cancel();
+          _updateItem(
+            id,
+            (t) => t.copyWith(
+              status: _seedingEnabled
+                  ? TorrentStatus.seeding
+                  : TorrentStatus.completed,
+              progress: 1.0,
+              downloadSpeed: 0,
+              peers: 0,
+            ),
+          );
+          if (!_seedingEnabled) task.stop();
+        })
+        ..on<TaskStopped>((event) {
+          handle.pollTimer?.cancel();
+        });
+
+      await task.start();
+
+      handle.pollTimer = Timer.periodic(
+        const Duration(seconds: 1),
+        (_) => _pollTask(id),
+      );
+
+      return item;
+    } catch (e) {
+      debugPrint('[TorrentManager] Failed to import .torrent file: $e');
+      return null;
+    }
+  }
+
   void _updateItem(String id, TorrentItem Function(TorrentItem) fn) {
     final idx = _torrents.indexWhere((t) => t.id == id);
     if (idx < 0) return;
@@ -370,9 +443,10 @@ class RealTorrentManager extends TorrentManager {
         }
       }
 
-      // Add popular default trackers immediately
+      // Add popular default trackers immediately (mix of UDP, HTTP, and HTTPS)
       const defaultTrackers = [
         'udp://tracker.opentrackr.org:1337/announce',
+        'http://tracker.opentrackr.org:1337/announce',
         'udp://open.stealth.si:80/announce',
         'udp://tracker.coppersurfer.tk:6969/announce',
         'udp://exodus.desync.com:6969/announce',
@@ -380,6 +454,10 @@ class RealTorrentManager extends TorrentManager {
         'udp://tracker.torrent.eu.org:451/announce',
         'udp://tracker.moeking.me:6969/announce',
         'udp://9.rarbg.to:2710/announce',
+        'http://tracker.gbitt.info:80/announce',
+        'http://share.camoe.cn:8080/announce',
+        'https://tracker.lilith.raws.dev:443/announce',
+        'https://tr.ready.net:443/announce',
       ];
       for (final tr in defaultTrackers) {
         final tUri = Uri.tryParse(tr);

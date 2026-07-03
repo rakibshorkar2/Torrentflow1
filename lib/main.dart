@@ -3,6 +3,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'package:file_picker/file_picker.dart';
 import 'liquid_glass_ui_helpers.dart';
 import 'settings_provider.dart';
 import 'storage_helper.dart';
@@ -425,6 +426,40 @@ class _DownloadsTabState extends State<DownloadsTab>
     HapticFeedback.mediumImpact();
   }
 
+  Future<void> _pickTorrentFile() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['torrent'],
+        withData: true,
+      );
+
+      if (result != null && result.files.isNotEmpty) {
+        final file = result.files.first;
+        final bytes = file.bytes;
+        if (bytes != null) {
+          final item = await widget.torrentManager.addTorrentFile(bytes, file.name);
+          if (item != null) {
+            _toggleMagnetInput();
+            HapticFeedback.mediumImpact();
+          } else {
+            HapticFeedback.mediumImpact();
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Failed to parse torrent file. It might be corrupt.'),
+                  backgroundColor: TFColors.accentRed,
+                ),
+              );
+            }
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[Main] File picker error: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = widget.isDark;
@@ -555,7 +590,7 @@ class _DownloadsTabState extends State<DownloadsTab>
                                         isDark: isDark,
                                         keyboardType: TextInputType.url,
                                         onSubmitted: _addMagnet,
-                                        prefix: Icon(
+                                        prefix: const Icon(
                                           CupertinoIcons.link,
                                           color: TFColors.accentCyan,
                                           size: 16,
@@ -569,24 +604,52 @@ class _DownloadsTabState extends State<DownloadsTab>
                                               isDark: isDark,
                                               accentColor: TFColors.accentCyan,
                                               onTap: _addMagnet,
-                                              child: Row(
+                                              child: const Row(
                                                 mainAxisAlignment:
                                                     MainAxisAlignment.center,
                                                 children: [
-                                                  const Icon(
-                                                    CupertinoIcons
-                                                        .arrow_down_circle_fill,
+                                                  Icon(
+                                                    CupertinoIcons.link,
                                                     color: TFColors.accentCyan,
-                                                    size: 16,
+                                                    size: 14,
                                                   ),
-                                                  const SizedBox(width: 6),
+                                                  SizedBox(width: 4),
                                                   Text(
-                                                    'Start Download',
+                                                    'Add Link',
                                                     style: TextStyle(
                                                       color: TFColors.accentCyan,
                                                       fontWeight:
                                                           FontWeight.w600,
-                                                      fontSize: 14,
+                                                      fontSize: 13,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 10),
+                                          Expanded(
+                                            child: GlassButton(
+                                              isDark: isDark,
+                                              accentColor: TFColors.accentViolet,
+                                              onTap: _pickTorrentFile,
+                                              child: const Row(
+                                                mainAxisAlignment:
+                                                    MainAxisAlignment.center,
+                                                children: [
+                                                  Icon(
+                                                    CupertinoIcons.folder_open,
+                                                    color: TFColors.accentViolet,
+                                                    size: 14,
+                                                  ),
+                                                  SizedBox(width: 4),
+                                                  Text(
+                                                    'Import File',
+                                                    style: TextStyle(
+                                                      color: TFColors.accentViolet,
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                      fontSize: 13,
                                                     ),
                                                   ),
                                                 ],
